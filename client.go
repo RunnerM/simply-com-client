@@ -93,7 +93,7 @@ func (c *SimplyClient) AddTxtRecord(FQDNName string, Value string, credentials C
 	return data.Record.Id, nil
 }
 
-// RemoveTxtRecord Remove TXT record from symply
+// RemoveTxtRecord Remove TXT record from simply
 func (c *SimplyClient) RemoveTxtRecord(RecordId int, DnsName string, credentials Credentials) bool {
 	dnsName := cutTrailingDotIfExist(DnsName)
 	req, err := http.NewRequest("DELETE", apiUrl+"/my/products/"+domainutil.Domain(dnsName)+"/dns/records/"+strconv.Itoa(RecordId), nil)
