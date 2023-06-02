@@ -14,8 +14,22 @@ const (
 	apiUrl = "https://api.simply.com/2"
 )
 
+type RecordType string
+
+var recordTypes = [...]RecordType{"A", "AAAA", "CNAME", "MX", "NS", "TXT", "SRV", "CAA", "SSHFP", "TLSA", "PTR", "NAPTR", "DS", "DNSKEY", "RRSIG", "SPF", "URI", "ALIAS", "ANAME", "LOC", "HINFO", "RP", "AFSDB", "CERT", "DNAME", "KEY", "KX", "MB", "MG", "MINFO", "MR", "MX", "NAPTR", "NS", "PTR", "SOA", "TXT", "WKS", "X25"}
+
+func validateRecordType(recordType RecordType) bool {
+	for _, t := range recordTypes {
+		if t == recordType {
+			return true
+		}
+	}
+	return false
+}
+
 // SimplyClient base type
 type SimplyClient struct {
+	Credentials Credentials `json:"credentials"`
 }
 
 // RecordResponse api type
@@ -34,11 +48,11 @@ type RecordResponse struct {
 
 // CreateUpdateRecordBody api type
 type CreateUpdateRecordBody struct {
-	Type     string `json:"type"`
-	Name     string `json:"name"`
-	Data     string `json:"data"`
-	Priority int    `json:"priority"`
-	Ttl      int    `json:"ttl"`
+	Type     RecordType `json:"type"`
+	Name     string     `json:"name"`
+	Data     string     `json:"data"`
+	Priority int        `json:"priority"`
+	Ttl      int        `json:"ttl"`
 }
 
 // CreateRecordResponse api type
@@ -55,12 +69,15 @@ type Credentials struct {
 	ApiKey      string `json:"message"`
 }
 
-// AddTxtRecord Add txt record to simply
-func (c *SimplyClient) AddTxtRecord(FQDNName string, Value string, credentials Credentials) (int, error) {
+// AddRecord Add record to simply
+func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType RecordType) (int, error) {
+	if !validateRecordType(recordType) {
+		return 0, fmt.Errorf("invalid record type: %s", recordType)
+	}
 	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
 	TXTRecordBody := CreateUpdateRecordBody{
-		Type:     "TXT",
+		Type:     recordType,
 		Name:     domainutil.Subdomain(fqdnName),
 		Data:     Value,
 		Priority: 1,
@@ -69,7 +86,7 @@ func (c *SimplyClient) AddTxtRecord(FQDNName string, Value string, credentials C
 	postBody, _ := json.Marshal(TXTRecordBody)
 	req, err := http.NewRequest("POST", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", bytes.NewBuffer(postBody))
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
-	req.SetBasicAuth(credentials.AccountName, credentials.ApiKey)
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
 	client := &http.Client{}
 	response, err := client.Do(req)
 
@@ -93,11 +110,11 @@ func (c *SimplyClient) AddTxtRecord(FQDNName string, Value string, credentials C
 	return data.Record.Id, nil
 }
 
-// RemoveTxtRecord Remove TXT record from simply
-func (c *SimplyClient) RemoveTxtRecord(RecordId int, DnsName string, credentials Credentials) bool {
+// RemoveRecord Remove record from simply
+func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
 	dnsName := cutTrailingDotIfExist(DnsName)
 	req, err := http.NewRequest("DELETE", apiUrl+"/my/products/"+domainutil.Domain(dnsName)+"/dns/records/"+strconv.Itoa(RecordId), nil)
-	req.SetBasicAuth(credentials.AccountName, credentials.ApiKey)
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
 	client := &http.Client{}
 	response, err := client.Do(req)
 
@@ -109,11 +126,11 @@ func (c *SimplyClient) RemoveTxtRecord(RecordId int, DnsName string, credentials
 	}
 }
 
-// GetTxtRecord Fetch TXT record by data returns id
-func (c *SimplyClient) GetTxtRecord(FQDNName string, credentials Credentials) (int, string, error) {
+// GetRecord Fetch record by data returns id
+func (c *SimplyClient) GetRecord(FQDNName string) (int, string, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
 	req, err := http.NewRequest("GET", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", nil)
-	req.SetBasicAuth(credentials.AccountName, credentials.ApiKey)
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
 	client := &http.Client{}
 	response, err := client.Do(req)
 	if err != nil || response.StatusCode != 200 {
@@ -147,10 +164,10 @@ func (c *SimplyClient) GetTxtRecord(FQDNName string, credentials Credentials) (i
 }
 
 // GetExactTxtRecord Fetch TXT record by data returns id of exact record
-func (c *SimplyClient) GetExactTxtRecord(TxtData string, FQDNName string, credentials Credentials) (int, error) {
+func (c *SimplyClient) GetExactTxtRecord(TxtData string, FQDNName string) (int, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
 	req, err := http.NewRequest("GET", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", nil)
-	req.SetBasicAuth(credentials.AccountName, credentials.ApiKey)
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
 	client := &http.Client{}
 	response, err := client.Do(req)
 	if err != nil || response.StatusCode != 200 {
@@ -182,11 +199,14 @@ func (c *SimplyClient) GetExactTxtRecord(TxtData string, FQDNName string, creden
 	return 0, nil
 }
 
-func (c *SimplyClient) UpdateTXTRecord(RecordId int, FQDNName string, Value string, credentials Credentials) (bool, error) {
+func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string, recordType RecordType) (bool, error) {
+	if !validateRecordType(recordType) {
+		return false, fmt.Errorf("invalid record type: %s", recordType)
+	}
 	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
 	TXTRecordBody := CreateUpdateRecordBody{
-		Type:     "TXT",
+		Type:     recordType,
 		Name:     domainutil.Subdomain(fqdnName),
 		Data:     Value,
 		Priority: 1,
@@ -195,7 +215,7 @@ func (c *SimplyClient) UpdateTXTRecord(RecordId int, FQDNName string, Value stri
 	putBody, _ := json.Marshal(TXTRecordBody)
 	req, err := http.NewRequest("PUT", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records/"+strconv.Itoa(RecordId), bytes.NewBuffer(putBody))
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
-	req.SetBasicAuth(credentials.AccountName, credentials.ApiKey)
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
 	client := &http.Client{}
 	response, err := client.Do(req)
 
