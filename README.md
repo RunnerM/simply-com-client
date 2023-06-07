@@ -16,4 +16,19 @@ import (
 	"github.com/runnerm/simply-com-client"
 )
 ```
+Create a new client with your API key.
+``` go
+client := CreateSimplyClient("accountName", "apiKey")
+```
+Use the client to interact with the API.
+``` go
+// Get record for a domain
+records, err := client.GetRecord("example.com")
+```
+
+## Implemented methods
+- [x] GetRecord
+- [x] AddRecord
+- [x] RemoveRecord
+- [x] UpdateRecord
 

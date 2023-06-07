@@ -1,34 +1,24 @@
-package client
+package simplyComClient
 
 import (
 	"fmt"
 	"testing"
 )
 
-var fixture = SimplyClient{
-	Credentials: Credentials{
-		AccountName: "",
-		ApiKey:      "",
-	},
-}
+// Plot in your own api details for testing.
+var fixture = CreateSimplyClient("", "")
 
 type testData struct {
-	domain      string
-	data        string
-	data2       string
-	accountname string
-	apikey      string
-	basedomain  string
+	domain string
+	data   string
+	data2  string
 }
 
-// Plot in your own api details for testing.
 func TestAll(t *testing.T) {
-	data := testData{ //add your credentials here to test.
-		domain:      "_acme-challenge.foo.com",
-		data:        "test_txt_data",
-		data2:       "test_txt_data_2",
-		accountname: "",
-		apikey:      "",
+	data := testData{
+		domain: "test.test.dk",
+		data:   "test_txt_data",
+		data2:  "test_txt_data_2",
 	}
 	testAdd(t, data)
 	id := testGet(t, data)

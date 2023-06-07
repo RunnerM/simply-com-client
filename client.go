@@ -1,4 +1,4 @@
-package client
+package simplyComClient
 
 import (
 	"bytes"
@@ -25,6 +25,15 @@ func validateRecordType(recordType RecordType) bool {
 		}
 	}
 	return false
+}
+
+func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
+	return SimplyClient{
+		Credentials: Credentials{
+			AccountName: accountName,
+			ApiKey:      apiKey,
+		},
+	}
 }
 
 // SimplyClient base type
@@ -126,25 +135,15 @@ func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
 	}
 }
 
-// GetRecord Fetch record by data returns id
+// GetRecord Fetch record by FQDNName returns id
 func (c *SimplyClient) GetRecord(FQDNName string) (int, string, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
-	req, err := http.NewRequest("GET", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", nil)
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
-	client := &http.Client{}
-	response, err := client.Do(req)
-	if err != nil || response.StatusCode != 200 {
-		_ = fmt.Errorf("error on request(GET record): %v response: %d", err, response.StatusCode)
-		return 0, "", err
+	responseData, err2, done := getRecords(FQDNName, c)
+	if done {
+		return 0, "", err2
 	}
-	responseData, err := io.ReadAll(response.Body)
-	if err != nil {
-		_ = fmt.Errorf("error on read: %v", err)
-		return 0, "", err
-	}
-
 	var records RecordResponse
-	err = json.Unmarshal(responseData, &records)
+	err := json.Unmarshal(responseData, &records)
 	var recordId int
 	var recordData string
 
@@ -161,6 +160,33 @@ func (c *SimplyClient) GetRecord(FQDNName string) (int, string, error) {
 		return 0, "", err
 	}
 	return 0, "", nil
+}
+
+// GetRecords Fetch records by FQDNName returns id
+func (c *SimplyClient) GetRecords(FQDNName string) (string, error) {
+	fqdnName := cutTrailingDotIfExist(FQDNName)
+	responseData, err2, done := getRecords(fqdnName, c)
+	if done {
+		return "", err2
+	}
+	return string(responseData), nil
+}
+
+func getRecords(fqdnName string, c *SimplyClient) ([]byte, error, bool) {
+	req, err := http.NewRequest("GET", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", nil)
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
+	client := &http.Client{}
+	response, err := client.Do(req)
+	if err != nil || response.StatusCode != 200 {
+		_ = fmt.Errorf("error on request(GET record): %v response: %d", err, response.StatusCode)
+		return nil, err, true
+	}
+	responseData, err := io.ReadAll(response.Body)
+	if err != nil {
+		_ = fmt.Errorf("error on read: %v", err)
+		return nil, err, true
+	}
+	return responseData, nil, false
 }
 
 // GetExactTxtRecord Fetch TXT record by data returns id of exact record
