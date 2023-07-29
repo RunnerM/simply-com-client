@@ -1,29 +1,24 @@
-package client
+package simplyComClient
 
 import (
 	"fmt"
 	"testing"
 )
 
-var fixture SimplyClient
+// Plot in your own api details for testing.
+var fixture = CreateSimplyClient("", "")
 
 type testData struct {
-	domain      string
-	data        string
-	data2       string
-	accountname string
-	apikey      string
-	basedomain  string
+	domain string
+	data   string
+	data2  string
 }
 
-// Plot in your own api details for testing.
 func TestAll(t *testing.T) {
-	data := testData{ //add your credentials here to test.
-		domain:      "_acme-challenge.foo.com",
-		data:        "test_txt_data",
-		data2:       "test_txt_data_2",
-		accountname: "",
-		apikey:      "",
+	data := testData{
+		domain: "test.test.dk",
+		data:   "test_txt_data",
+		data2:  "test_txt_data_2",
 	}
 	testAdd(t, data)
 	id := testGet(t, data)
@@ -33,10 +28,7 @@ func TestAll(t *testing.T) {
 }
 
 func testAdd(t *testing.T, data testData) {
-	id, err := fixture.AddTxtRecord(data.domain, data.data, Credentials{
-		AccountName: data.accountname,
-		ApiKey:      data.apikey,
-	})
+	id, err := fixture.AddRecord(data.domain, data.data, "TXT")
 	if err != nil {
 		t.Fail()
 	}
@@ -47,10 +39,7 @@ func testAdd(t *testing.T, data testData) {
 }
 
 func testUpdate(t *testing.T, data testData, id int) {
-	res, err := fixture.UpdateTXTRecord(id, data.domain, data.data2, Credentials{
-		AccountName: data.accountname,
-		ApiKey:      data.apikey,
-	})
+	res, err := fixture.UpdateRecord(id, data.domain, data.data2, "TXT")
 	if err != nil {
 		t.Fail()
 	}
@@ -61,29 +50,20 @@ func testUpdate(t *testing.T, data testData, id int) {
 }
 
 func testRemove(t *testing.T, data testData, id int) {
-	res2, _ := fixture.GetExactTxtRecord(data.data2, data.domain, Credentials{
-		AccountName: data.accountname,
-		ApiKey:      data.apikey,
-	})
+	res2, _, _ := fixture.GetRecord(data.domain, data.data2, "TXT")
 
 	if res2 != id {
 		t.Fail()
 	}
 
-	res := fixture.RemoveTxtRecord(id, data.domain, Credentials{
-		AccountName: data.accountname,
-		ApiKey:      data.apikey,
-	})
+	res := fixture.RemoveRecord(id, data.domain)
 	if res != true {
 		t.Fail()
 	}
 
 }
 func testGet(t *testing.T, data testData) int {
-	id, recData, _ := fixture.GetTxtRecord(data.domain, Credentials{
-		AccountName: data.accountname,
-		ApiKey:      data.apikey,
-	})
+	id, recData, _ := fixture.GetRecord(data.domain, data.data, "TXT")
 	if id == 0 {
 		t.Fail()
 	}
