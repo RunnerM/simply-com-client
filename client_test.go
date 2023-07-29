@@ -50,7 +50,7 @@ func testUpdate(t *testing.T, data testData, id int) {
 }
 
 func testRemove(t *testing.T, data testData, id int) {
-	res2, _ := fixture.GetExactTxtRecord(data.data2, data.domain)
+	res2, _, _ := fixture.GetRecord(data.domain, data.data2, "TXT")
 
 	if res2 != id {
 		t.Fail()
@@ -63,7 +63,7 @@ func testRemove(t *testing.T, data testData, id int) {
 
 }
 func testGet(t *testing.T, data testData) int {
-	id, recData, _ := fixture.GetRecord(data.domain)
+	id, recData, _ := fixture.GetRecord(data.domain, data.data, "TXT")
 	if id == 0 {
 		t.Fail()
 	}

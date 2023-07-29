@@ -3,8 +3,9 @@ package simplyComClient
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"github.com/bobesa/go-domain-util/domainutil"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"strconv"
@@ -29,16 +30,18 @@ func validateRecordType(recordType RecordType) bool {
 
 func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
 	return SimplyClient{
-		Credentials: Credentials{
+		Credentials{
 			AccountName: accountName,
 			ApiKey:      apiKey,
 		},
+		log.New(),
 	}
 }
 
 // SimplyClient base type
 type SimplyClient struct {
 	Credentials Credentials `json:"credentials"`
+	Logger      *log.Logger
 }
 
 // RecordResponse api type
@@ -81,7 +84,8 @@ type Credentials struct {
 // AddRecord Add record to simply
 func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType RecordType) (int, error) {
 	if !validateRecordType(recordType) {
-		return 0, fmt.Errorf("invalid record type: %s", recordType)
+		log.Errorln("invalid record type: ", recordType)
+		return 0, errors.New("invalid record type")
 	}
 	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
@@ -100,20 +104,20 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 	response, err := client.Do(req)
 
 	if err != nil || response.StatusCode != 200 {
-		fmt.Println("Error on request: ", err, " response: ", response.StatusCode)
+		log.Errorln("Failed request, response: ", response.StatusCode)
 		return 0, err
 	}
 	responseData, err := io.ReadAll(response.Body)
 
 	if err != nil {
-		fmt.Println("Error on read: ", err)
+		log.Errorln("Failed to read body with error: ", err)
 		return 0, err
 	}
 	var data CreateRecordResponse
 
 	err = json.Unmarshal(responseData, &data)
 	if err != nil {
-		fmt.Println("Error on unmarshalling: ", err)
+		log.Errorln("Failed to unmarshal body with error: ", err)
 		return 0, err
 	}
 	return data.Record.Id, nil
@@ -128,15 +132,14 @@ func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
 	response, err := client.Do(req)
 
 	if err != nil || response.StatusCode != 200 {
-		_ = fmt.Errorf("error on request(DELETE record): %v response: %d", err, response.StatusCode)
+		log.Errorln("Failed request, response code: ", response.StatusCode)
 		return false
-	} else {
-		return true
 	}
+	return true
 }
 
-// GetRecord Fetch record by FQDNName returns id
-func (c *SimplyClient) GetRecord(FQDNName string) (int, string, error) {
+// GetRecord Fetch record by FQDNName, RecordData and RecordType,TTL and priority are ignored, returns id of first record found.
+func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType RecordType) (int, string, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
 	responseData, err2, done := getRecords(FQDNName, c)
 	if done {
@@ -149,17 +152,18 @@ func (c *SimplyClient) GetRecord(FQDNName string) (int, string, error) {
 
 	if err == nil {
 		for i := 0; i < len(records.Records); i++ {
-			if records.Records[i].Type == "TXT" && records.Records[i].Name == domainutil.Subdomain(fqdnName) {
+			if records.Records[i].Data == RecordData && records.Records[i].Type == string(recordType) && records.Records[i].Name == domainutil.Subdomain(fqdnName) {
 				recordId = records.Records[i].RecordId
 				recordData = records.Records[i].Data
 				return recordId, recordData, nil
 			}
 		}
+		log.Errorln("Record not found")
+		return 0, "", errors.New("record not found")
 	} else {
-		_ = fmt.Errorf("error on fecthing records: %v", err)
+		log.Errorln("Failed to unmarshal body with error: ", err)
 		return 0, "", err
 	}
-	return 0, "", nil
 }
 
 // GetRecords Fetch records by FQDNName returns id
@@ -178,56 +182,22 @@ func getRecords(fqdnName string, c *SimplyClient) ([]byte, error, bool) {
 	client := &http.Client{}
 	response, err := client.Do(req)
 	if err != nil || response.StatusCode != 200 {
-		_ = fmt.Errorf("error on request(GET record): %v response: %d", err, response.StatusCode)
+		log.Errorln("Failed request, response code: ", response.StatusCode)
 		return nil, err, true
 	}
 	responseData, err := io.ReadAll(response.Body)
 	if err != nil {
-		_ = fmt.Errorf("error on read: %v", err)
+		log.Errorln("Error on read: ", err)
 		return nil, err, true
 	}
 	return responseData, nil, false
 }
 
-// GetExactTxtRecord Fetch TXT record by data returns id of exact record
-func (c *SimplyClient) GetExactTxtRecord(TxtData string, FQDNName string) (int, error) {
-	fqdnName := cutTrailingDotIfExist(FQDNName)
-	req, err := http.NewRequest("GET", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", nil)
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
-	client := &http.Client{}
-	response, err := client.Do(req)
-	if err != nil || response.StatusCode != 200 {
-		_ = fmt.Errorf("error on request(GET record): %v response: %d", err, response.StatusCode)
-		return 0, err
-	}
-	responseData, err := io.ReadAll(response.Body)
-	if err != nil {
-		_ = fmt.Errorf("error on read: %v", err)
-		return 0, err
-	}
-
-	var records RecordResponse
-	err = json.Unmarshal(responseData, &records)
-	var recordId int
-
-	if err == nil {
-		for i := 0; i < len(records.Records); i++ {
-			if records.Records[i].Data == TxtData && records.Records[i].Name == domainutil.Subdomain(fqdnName) {
-				recordId = records.Records[i].RecordId
-
-				return recordId, nil
-			}
-		}
-	} else {
-		_ = fmt.Errorf("error on fecthing records: %v", err)
-		return 0, err
-	}
-	return 0, nil
-}
-
+// UpdateRecord Update record by RecordId, FQDNName, Value and RecordType
 func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string, recordType RecordType) (bool, error) {
 	if !validateRecordType(recordType) {
-		return false, fmt.Errorf("invalid record type: %s", recordType)
+		log.Errorln("Invalid record type: ", recordType)
+		return false, errors.New("invalid record type")
 	}
 	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
@@ -246,7 +216,7 @@ func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string,
 	response, err := client.Do(req)
 
 	if err != nil || response.StatusCode != 200 {
-		_ = fmt.Errorf("error on request(PUT Record): %v response: %d", err, response.StatusCode)
+		log.Errorln("Failed request, response code: ", response.StatusCode)
 		return false, err
 	}
 	return true, nil
