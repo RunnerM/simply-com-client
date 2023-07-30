@@ -147,15 +147,18 @@ func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType 
 	}
 	var records RecordResponse
 	err := json.Unmarshal(responseData, &records)
-	var recordId int
-	var recordData string
 
 	if err == nil {
 		for i := 0; i < len(records.Records); i++ {
 			if records.Records[i].Data == RecordData && records.Records[i].Type == string(recordType) && records.Records[i].Name == domainutil.Subdomain(fqdnName) {
-				recordId = records.Records[i].RecordId
-				recordData = records.Records[i].Data
-				return recordId, recordData, nil
+				return records.Records[i].RecordId, records.Records[i].Data, nil
+			}
+		}
+		if RecordData == "" {
+			for i := 0; i < len(records.Records); i++ {
+				if records.Records[i].Type == string(recordType) && records.Records[i].Name == domainutil.Subdomain(fqdnName) {
+					return records.Records[i].RecordId, records.Records[i].Data, nil
+				}
 			}
 		}
 		log.Errorln("Record not found")

@@ -63,7 +63,7 @@ func testRemove(t *testing.T, data testData, id int) {
 
 }
 func testGet(t *testing.T, data testData) int {
-	id, recData, _ := fixture.GetRecord(data.domain, data.data, "TXT")
+	id, recData, _ := fixture.GetRecord(data.domain, "", "TXT")
 	if id == 0 {
 		t.Fail()
 	}
