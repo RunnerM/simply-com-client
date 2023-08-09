@@ -141,8 +141,8 @@ func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
 // GetRecord Fetch record by FQDNName, RecordData and RecordType,TTL and priority are ignored, returns id of first record found.
 func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType RecordType) (int, string, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
-	responseData, err2, done := getRecords(FQDNName, c)
-	if done {
+	responseData, err2, failed := getRecords(fqdnName, c)
+	if failed {
 		return 0, "", err2
 	}
 	var records RecordResponse
@@ -172,8 +172,8 @@ func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType 
 // GetRecords Fetch records by FQDNName returns id
 func (c *SimplyClient) GetRecords(FQDNName string) (string, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
-	responseData, err2, done := getRecords(fqdnName, c)
-	if done {
+	responseData, err2, failed := getRecords(fqdnName, c)
+	if failed {
 		return "", err2
 	}
 	return string(responseData), nil
