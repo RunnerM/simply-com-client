@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"github.com/bobesa/go-domain-util/domainutil"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/bobesa/go-domain-util/domainutil"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -214,6 +215,29 @@ func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string,
 	putBody, _ := json.Marshal(TXTRecordBody)
 	req, err := http.NewRequest("PUT", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records/"+strconv.Itoa(RecordId), bytes.NewBuffer(putBody))
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
+	client := &http.Client{}
+	response, err := client.Do(req)
+
+	if err != nil || response.StatusCode != 200 {
+		log.Errorln("Failed request, response code: ", response.StatusCode)
+		return false, err
+	}
+	return true, nil
+}
+
+// DDNS update/create record if Ip omited Simply api will use client IP
+func (c *SimplyClient) UpdateDDNS(FQDNName string, Ip string) (bool, error) {
+	fqdnName := cutTrailingDotIfExist(FQDNName)
+	domain := domainutil.Domain(fqdnName)
+	path := ""
+	if Ip == "" {
+		path = "/ddns/?domain="+ domain+ "&hostname=" + fqdnName
+	} else {
+		path = "/ddns/?domain="+ domain+ "&hostname=" + fqdnName + "&myip=" + Ip
+	}
+	//body, _ := json.Marshal("")
+	req, err := http.NewRequest("POST", apiUrl+path, nil)
 	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
 	client := &http.Client{}
 	response, err := client.Do(req)

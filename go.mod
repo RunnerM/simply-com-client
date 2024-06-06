@@ -1,6 +1,6 @@
 module github.com/runnerm/simply-com-client
 
-go 1.20
+go 1.22.0
 
 require (
 	github.com/bobesa/go-domain-util v0.0.0-20190911083921-4033b5f7dd89

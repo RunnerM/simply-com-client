@@ -9,21 +9,25 @@ import (
 var fixture = CreateSimplyClient("", "")
 
 type testData struct {
-	domain string
-	data   string
-	data2  string
+	domain  string
+	data    string
+	data2   string
+	bogusIP string
 }
 
 func TestAll(t *testing.T) {
 	data := testData{
-		domain: "test.test.dk",
-		data:   "test_txt_data",
-		data2:  "test_txt_data_2",
+		domain:  "test2.ddns.example.dk",
+		data:    "test_txt_data",
+		data2:   "test_txt_data_2",
+		bogusIP: "19.19.19.20",
 	}
 	testAdd(t, data)
 	id := testGet(t, data)
 	testUpdate(t, data, id)
 	testRemove(t, data, id)
+	testddns(t, data)
+	testddnsWithoutIp(t, data)
 
 }
 
@@ -71,4 +75,24 @@ func testGet(t *testing.T, data testData) int {
 		t.Fail()
 	}
 	return id
+}
+
+func testddns(t *testing.T, data testData) {
+	res, err := fixture.UpdateDDNS(data.domain, data.bogusIP)
+	if err != nil {
+		t.Fail()
+	}
+	if res != true {
+		t.Fail()
+	}
+}
+
+func testddnsWithoutIp(t *testing.T, data testData) {
+	res, err := fixture.UpdateDDNS(data.domain, "")
+	if err != nil {
+		t.Fail()
+	}
+	if res != true {
+		t.Fail()
+	}
 }
