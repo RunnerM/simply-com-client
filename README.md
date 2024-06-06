@@ -32,4 +32,5 @@ records, err := client.GetRecord("example.com")
 - [x] AddRecord
 - [x] RemoveRecord
 - [x] UpdateRecord
+- [x] UpdateDDNS
 
