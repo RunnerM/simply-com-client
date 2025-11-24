@@ -36,6 +36,7 @@ func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
 			ApiKey:      apiKey,
 		},
 		log.New(),
+		3600, // Default TTL
 	}
 }
 
@@ -43,6 +44,7 @@ func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
 type SimplyClient struct {
 	Credentials Credentials `json:"credentials"`
 	Logger      *log.Logger
+	DefaultTTL  int
 }
 
 // RecordResponse api type
@@ -90,12 +92,21 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 	}
 	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
+	// PATCH: Support custom TTL settings
+	effectiveTTL := c.DefaultTTL
+	if effectiveTTL <= 0 {
+	    effectiveTTL = 3600
+	}
+	// END PATCH
+
 	TXTRecordBody := CreateUpdateRecordBody{
 		Type:     recordType,
 		Name:     domainutil.Subdomain(fqdnName),
 		Data:     Value,
 		Priority: 1,
-		Ttl:      3600,
+	// PATCH: Change from hardcode 3600 to custom TTL
+		Ttl:      effectiveTTL,
+	// END PATCH
 	}
 	postBody, _ := json.Marshal(TXTRecordBody)
 	req, err := http.NewRequest("POST", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", bytes.NewBuffer(postBody))
@@ -205,12 +216,21 @@ func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string,
 	}
 	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
+
+	// PATCH: Support custom TTL settings
+	effectiveTTL := c.DefaultTTL
+	if effectiveTTL <= 0 {
+	    effectiveTTL = 3600
+	}
+	// END PATCH
 	TXTRecordBody := CreateUpdateRecordBody{
 		Type:     recordType,
 		Name:     domainutil.Subdomain(fqdnName),
 		Data:     Value,
 		Priority: 1,
-		Ttl:      3600,
+	// PATCH: Changed from hardcoded 3600 to custom TTL
+		Ttl:      effectiveTTL,
+	// END PATCH
 	}
 	putBody, _ := json.Marshal(TXTRecordBody)
 	req, err := http.NewRequest("PUT", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records/"+strconv.Itoa(RecordId), bytes.NewBuffer(putBody))
