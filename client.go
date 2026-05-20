@@ -37,6 +37,20 @@ func validateRecordType(recordType RecordType) bool {
 	return false
 }
 
+// CreateSimplyClient returns a client authenticated against the Simply.com
+// API. accountName and apiKey are sent as HTTP Basic Auth on every request.
+//
+// Example:
+//
+//	client := simplyComClient.CreateSimplyClient("S123456", "abcdef...")
+//	id, err := client.AddRecord("_acme-challenge.example.com", "token", "TXT")
+//	if err != nil {
+//	    // handle err
+//	}
+//	_ = id
+//
+// Credentials can be obtained from https://www.simply.com/ under
+// account settings.
 func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
 	return SimplyClient{
 		Credentials{
