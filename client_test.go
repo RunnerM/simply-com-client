@@ -26,8 +26,7 @@ func TestAll(t *testing.T) {
 	id := testGet(t, data)
 	testUpdate(t, data, id)
 	testRemove(t, data, id)
-	testddns(t, data)
-	testddnsWithoutIp(t, data)
+	testUpsertAddressRecord(t, data)
 
 }
 
@@ -77,18 +76,8 @@ func testGet(t *testing.T, data testData) int {
 	return id
 }
 
-func testddns(t *testing.T, data testData) {
-	res, err := fixture.UpdateDDNS(data.domain, data.bogusIP)
-	if err != nil {
-		t.Fail()
-	}
-	if res != true {
-		t.Fail()
-	}
-}
-
-func testddnsWithoutIp(t *testing.T, data testData) {
-	res, err := fixture.UpdateDDNS(data.domain, "")
+func testUpsertAddressRecord(t *testing.T, data testData) {
+	res, err := fixture.UpsertAddressRecord(data.domain, data.bogusIP)
 	if err != nil {
 		t.Fail()
 	}
