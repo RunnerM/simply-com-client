@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 
@@ -18,7 +20,13 @@ const (
 
 type RecordType string
 
-var recordTypes = [...]RecordType{"A", "AAAA", "CNAME", "MX", "NS", "TXT", "SRV", "CAA", "SSHFP", "TLSA", "PTR", "NAPTR", "DS", "DNSKEY", "RRSIG", "SPF", "URI", "ALIAS", "ANAME", "LOC", "HINFO", "RP", "AFSDB", "CERT", "DNAME", "KEY", "KX", "MB", "MG", "MINFO", "MR", "MX", "NAPTR", "NS", "PTR", "SOA", "TXT", "WKS", "X25"}
+var recordTypes = [...]RecordType{
+	"A", "AAAA", "AFSDB", "ALIAS", "ANAME", "CAA", "CERT", "CNAME",
+	"DNAME", "DNSKEY", "DS", "HINFO", "KEY", "KX", "LOC", "MB",
+	"MG", "MINFO", "MR", "MX", "NAPTR", "NS", "PTR", "RP",
+	"RRSIG", "SOA", "SPF", "SRV", "SSHFP", "TLSA", "TXT", "URI",
+	"WKS", "X25",
+}
 
 func validateRecordType(recordType RecordType) bool {
 	for _, t := range recordTypes {
@@ -29,6 +37,20 @@ func validateRecordType(recordType RecordType) bool {
 	return false
 }
 
+// CreateSimplyClient returns a client authenticated against the Simply.com
+// API. accountName and apiKey are sent as HTTP Basic Auth on every request.
+//
+// Example:
+//
+//	client := simplyComClient.CreateSimplyClient("S123456", "abcdef...")
+//	id, err := client.AddRecord("_acme-challenge.example.com", "token", "TXT")
+//	if err != nil {
+//	    // handle err
+//	}
+//	_ = id
+//
+// Credentials can be obtained from https://www.simply.com/ under
+// account settings.
 func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
 	return SimplyClient{
 		Credentials{
@@ -80,8 +102,56 @@ type CreateRecordResponse struct {
 }
 
 type Credentials struct {
-	AccountName string `json:"status"`
-	ApiKey      string `json:"message"`
+	AccountName string `json:"-"`
+	ApiKey      string `json:"-"`
+}
+
+func (c *SimplyClient) doRequest(method, path string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequest(method, apiUrl+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("build request (%s %s): %w", method, path, err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	}
+	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("simply.com API request failed (%s %s): %w", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body (%s %s): %w", method, path, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("simply.com API error (%s %s, HTTP %d): %s",
+			method, path, resp.StatusCode, extractAPIError(data))
+	}
+	return data, nil
+}
+
+func extractAPIError(body []byte) string {
+	if len(body) == 0 {
+		return "no response body"
+	}
+	var probe struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if json.Unmarshal(body, &probe) == nil {
+		if probe.Error != "" {
+			return probe.Error
+		}
+		if probe.Message != "" {
+			return probe.Message
+		}
+	}
+	return string(body)
 }
 
 // AddRecord Add record to simply
@@ -90,47 +160,37 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 		log.Errorln("invalid record type: ", recordType)
 		return 0, errors.New("invalid record type")
 	}
-	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
-	// PATCH: Support custom TTL settings
+
 	effectiveTTL := c.DefaultTTL
 	if effectiveTTL <= 0 {
-	    effectiveTTL = 3600
+		effectiveTTL = 3600
 	}
-	// END PATCH
 
 	TXTRecordBody := CreateUpdateRecordBody{
 		Type:     recordType,
 		Name:     domainutil.Subdomain(fqdnName),
 		Data:     Value,
 		Priority: 1,
-	// PATCH: Change from hardcode 3600 to custom TTL
 		Ttl:      effectiveTTL,
-	// END PATCH
 	}
-	postBody, _ := json.Marshal(TXTRecordBody)
-	req, err := http.NewRequest("POST", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", bytes.NewBuffer(postBody))
-	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
-	client := &http.Client{}
-	response, err := client.Do(req)
-
-	if err != nil || response.StatusCode != 200 {
-		log.Errorln("Failed request, response: ", response.StatusCode)
-		return 0, err
-	}
-	responseData, err := io.ReadAll(response.Body)
-
+	postBody, err := json.Marshal(TXTRecordBody)
 	if err != nil {
-		log.Errorln("Failed to read body with error: ", err)
+		log.Errorln("Failed to marshal request body: ", err)
+		return 0, fmt.Errorf("marshal request body: %w", err)
+	}
+
+	path := "/my/products/" + domainutil.Domain(fqdnName) + "/dns/records/"
+	responseData, err := c.doRequest("POST", path, bytes.NewBuffer(postBody))
+	if err != nil {
+		log.Errorln(err)
 		return 0, err
 	}
+
 	var data CreateRecordResponse
-
-	err = json.Unmarshal(responseData, &data)
-	if err != nil {
+	if err := json.Unmarshal(responseData, &data); err != nil {
 		log.Errorln("Failed to unmarshal body with error: ", err)
-		return 0, err
+		return 0, fmt.Errorf("unmarshal create-record response: %w", err)
 	}
 	return data.Record.Id, nil
 }
@@ -138,13 +198,9 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 // RemoveRecord Remove record from simply
 func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
 	dnsName := cutTrailingDotIfExist(DnsName)
-	req, err := http.NewRequest("DELETE", apiUrl+"/my/products/"+domainutil.Domain(dnsName)+"/dns/records/"+strconv.Itoa(RecordId), nil)
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
-	client := &http.Client{}
-	response, err := client.Do(req)
-
-	if err != nil || response.StatusCode != 200 {
-		log.Errorln("Failed request, response code: ", response.StatusCode)
+	path := "/my/products/" + domainutil.Domain(dnsName) + "/dns/records/" + strconv.Itoa(RecordId) + "/"
+	if _, err := c.doRequest("DELETE", path, nil); err != nil {
+		log.Errorln(err)
 		return false
 	}
 	return true
@@ -153,59 +209,51 @@ func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
 // GetRecord Fetch record by FQDNName, RecordData and RecordType,TTL and priority are ignored, returns id of first record found.
 func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType RecordType) (int, string, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
-	responseData, err2, failed := getRecords(fqdnName, c)
-	if failed {
-		return 0, "", err2
+	responseData, err := getRecords(fqdnName, c)
+	if err != nil {
+		return 0, "", err
 	}
 	var records RecordResponse
-	err := json.Unmarshal(responseData, &records)
+	if err := json.Unmarshal(responseData, &records); err != nil {
+		log.Errorln("Failed to unmarshal body with error: ", err)
+		return 0, "", fmt.Errorf("unmarshal records response: %w", err)
+	}
 
-	if err == nil {
+	subdomain := domainutil.Subdomain(fqdnName)
+	for i := 0; i < len(records.Records); i++ {
+		if records.Records[i].Data == RecordData && records.Records[i].Type == string(recordType) && records.Records[i].Name == subdomain {
+			return records.Records[i].RecordId, records.Records[i].Data, nil
+		}
+	}
+	if RecordData == "" {
 		for i := 0; i < len(records.Records); i++ {
-			if records.Records[i].Data == RecordData && records.Records[i].Type == string(recordType) && records.Records[i].Name == domainutil.Subdomain(fqdnName) {
+			if records.Records[i].Type == string(recordType) && records.Records[i].Name == subdomain {
 				return records.Records[i].RecordId, records.Records[i].Data, nil
 			}
 		}
-		if RecordData == "" {
-			for i := 0; i < len(records.Records); i++ {
-				if records.Records[i].Type == string(recordType) && records.Records[i].Name == domainutil.Subdomain(fqdnName) {
-					return records.Records[i].RecordId, records.Records[i].Data, nil
-				}
-			}
-		}
-		log.Errorln("Record not found")
-		return 0, "", errors.New("record not found")
-	} else {
-		log.Errorln("Failed to unmarshal body with error: ", err)
-		return 0, "", err
 	}
+	log.Errorln("Record not found")
+	return 0, "", errors.New("record not found")
 }
 
 // GetRecords Fetch records by FQDNName returns id
 func (c *SimplyClient) GetRecords(FQDNName string) (string, error) {
 	fqdnName := cutTrailingDotIfExist(FQDNName)
-	responseData, err2, failed := getRecords(fqdnName, c)
-	if failed {
-		return "", err2
+	responseData, err := getRecords(fqdnName, c)
+	if err != nil {
+		return "", err
 	}
 	return string(responseData), nil
 }
 
-func getRecords(fqdnName string, c *SimplyClient) ([]byte, error, bool) {
-	req, err := http.NewRequest("GET", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records", nil)
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
-	client := &http.Client{}
-	response, err := client.Do(req)
-	if err != nil || response.StatusCode != 200 {
-		log.Errorln("Failed request, response code: ", response.StatusCode)
-		return nil, err, true
-	}
-	responseData, err := io.ReadAll(response.Body)
+func getRecords(fqdnName string, c *SimplyClient) ([]byte, error) {
+	path := "/my/products/" + domainutil.Domain(fqdnName) + "/dns/records/"
+	data, err := c.doRequest("GET", path, nil)
 	if err != nil {
-		log.Errorln("Error on read: ", err)
-		return nil, err, true
+		log.Errorln(err)
+		return nil, err
 	}
-	return responseData, nil, false
+	return data, nil
 }
 
 // UpdateRecord Update record by RecordId, FQDNName, Value and RecordType
@@ -214,57 +262,58 @@ func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string,
 		log.Errorln("Invalid record type: ", recordType)
 		return false, errors.New("invalid record type")
 	}
-	// Trim one trailing dot
 	fqdnName := cutTrailingDotIfExist(FQDNName)
 
-	// PATCH: Support custom TTL settings
 	effectiveTTL := c.DefaultTTL
 	if effectiveTTL <= 0 {
-	    effectiveTTL = 3600
+		effectiveTTL = 3600
 	}
-	// END PATCH
+
 	TXTRecordBody := CreateUpdateRecordBody{
 		Type:     recordType,
 		Name:     domainutil.Subdomain(fqdnName),
 		Data:     Value,
 		Priority: 1,
-	// PATCH: Changed from hardcoded 3600 to custom TTL
 		Ttl:      effectiveTTL,
-	// END PATCH
 	}
-	putBody, _ := json.Marshal(TXTRecordBody)
-	req, err := http.NewRequest("PUT", apiUrl+"/my/products/"+domainutil.Domain(fqdnName)+"/dns/records/"+strconv.Itoa(RecordId), bytes.NewBuffer(putBody))
-	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
-	client := &http.Client{}
-	response, err := client.Do(req)
+	putBody, err := json.Marshal(TXTRecordBody)
+	if err != nil {
+		log.Errorln("Failed to marshal request body: ", err)
+		return false, fmt.Errorf("marshal request body: %w", err)
+	}
 
-	if err != nil || response.StatusCode != 200 {
-		log.Errorln("Failed request, response code: ", response.StatusCode)
+	path := "/my/products/" + domainutil.Domain(fqdnName) + "/dns/records/" + strconv.Itoa(RecordId) + "/"
+	if _, err := c.doRequest("PUT", path, bytes.NewBuffer(putBody)); err != nil {
+		log.Errorln(err)
 		return false, err
 	}
 	return true, nil
 }
 
-// DDNS update/create record if Ip omited Simply api will use client IP
-func (c *SimplyClient) UpdateDDNS(FQDNName string, Ip string) (bool, error) {
-	fqdnName := cutTrailingDotIfExist(FQDNName)
-	domain := domainutil.Domain(fqdnName)
-	path := ""
-	if Ip == "" {
-		path = "/ddns/?domain="+ domain+ "&hostname=" + fqdnName
-	} else {
-		path = "/ddns/?domain="+ domain+ "&hostname=" + fqdnName + "&myip=" + Ip
+// UpsertAddressRecord updates the A or AAAA record for FQDNName to point at
+// Ip, creating it if it does not already exist. A vs AAAA is chosen from the
+// IP family.
+func (c *SimplyClient) UpsertAddressRecord(FQDNName string, Ip string) (bool, error) {
+	parsedIP := net.ParseIP(Ip)
+	if parsedIP == nil {
+		return false, fmt.Errorf("invalid IP address: %q", Ip)
 	}
-	//body, _ := json.Marshal("")
-	req, err := http.NewRequest("POST", apiUrl+path, nil)
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
-	client := &http.Client{}
-	response, err := client.Do(req)
 
-	if err != nil || response.StatusCode != 200 {
-		log.Errorln("Failed request, response code: ", response.StatusCode)
-		return false, err
+	recordType := RecordType("A")
+	if parsedIP.To4() == nil {
+		recordType = RecordType("AAAA")
+	}
+
+	id, currentData, err := c.GetRecord(FQDNName, "", recordType)
+	if err == nil && id != 0 {
+		if currentData == Ip {
+			return true, nil
+		}
+		return c.UpdateRecord(id, FQDNName, Ip, recordType)
+	}
+
+	if _, addErr := c.AddRecord(FQDNName, Ip, recordType); addErr != nil {
+		return false, addErr
 	}
 	return true, nil
 }
