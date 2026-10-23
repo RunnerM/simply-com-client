@@ -38,19 +38,19 @@ func validateRecordType(recordType RecordType) bool {
 }
 
 // CreateSimplyClient returns a client authenticated against the Simply.com
-// API. accountName and apiKey are sent as HTTP Basic Auth on every request.
+// API. apiKey is sent as a Bearer token on every request. accountName is no
+// longer used by the API and may be empty; it is kept for compatibility.
 //
 // Example:
 //
-//	client := simplyComClient.CreateSimplyClient("S123456", "abcdef...")
+//	client := simplyComClient.CreateSimplyClient("", "abcdef...")
 //	id, err := client.AddRecord("_acme-challenge.example.com", "token", "TXT")
 //	if err != nil {
 //	    // handle err
 //	}
 //	_ = id
 //
-// Credentials can be obtained from https://www.simply.com/ under
-// account settings.
+// See https://www.simply.com/en/docs/api/ for how to obtain an API key.
 func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
 	return SimplyClient{
 		Credentials{
@@ -114,7 +114,7 @@ func (c *SimplyClient) doRequest(method, path string, body io.Reader) ([]byte, e
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json; charset=UTF-8")
 	}
-	req.SetBasicAuth(c.Credentials.AccountName, c.Credentials.ApiKey)
+	req.Header.Set("Authorization", "Bearer "+c.Credentials.ApiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)

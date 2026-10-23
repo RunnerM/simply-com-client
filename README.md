@@ -17,9 +17,10 @@ import (
 	"github.com/runnerm/simply-com-client"
 )
 ```
-Create a new client with your API key.
+Create a new client with your API key. It is sent as a Bearer token; the account name
+is no longer needed and can be left empty.
 ``` go
-client := CreateSimplyClient("accountName", "apiKey")
+client := CreateSimplyClient("", "apiKey")
 ```
 Use the client to interact with the API.
 ``` go
