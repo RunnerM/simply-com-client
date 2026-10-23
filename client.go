@@ -8,15 +8,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
+	"sync"
 
-	"github.com/bobesa/go-domain-util/domainutil"
 	log "github.com/sirupsen/logrus"
 )
 
-const (
-	apiUrl = "https://api.simply.com/2"
-)
+var apiUrl = "https://api.simply.com/2"
 
 type RecordType string
 
@@ -53,12 +53,13 @@ func validateRecordType(recordType RecordType) bool {
 // See https://www.simply.com/en/docs/api/ for how to obtain an API key.
 func CreateSimplyClient(accountName string, apiKey string) SimplyClient {
 	return SimplyClient{
-		Credentials{
+		Credentials: Credentials{
 			AccountName: accountName,
 			ApiKey:      apiKey,
 		},
-		log.New(),
-		3600, // Default TTL
+		Logger:     log.New(),
+		DefaultTTL: 3600,
+		products:   &productCache{},
 	}
 }
 
@@ -67,6 +68,13 @@ type SimplyClient struct {
 	Credentials Credentials `json:"credentials"`
 	Logger      *log.Logger
 	DefaultTTL  int
+
+	products *productCache
+}
+
+type productCache struct {
+	mu      sync.Mutex
+	objects map[string]string
 }
 
 // RecordResponse api type
@@ -160,7 +168,11 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 		log.Errorln("invalid record type: ", recordType)
 		return 0, errors.New("invalid record type")
 	}
-	fqdnName := cutTrailingDotIfExist(FQDNName)
+	object, name, err := c.resolveProduct(FQDNName)
+	if err != nil {
+		log.Errorln(err)
+		return 0, err
+	}
 
 	effectiveTTL := c.DefaultTTL
 	if effectiveTTL <= 0 {
@@ -169,7 +181,7 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 
 	TXTRecordBody := CreateUpdateRecordBody{
 		Type:     recordType,
-		Name:     domainutil.Subdomain(fqdnName),
+		Name:     name,
 		Data:     Value,
 		Priority: 1,
 		Ttl:      effectiveTTL,
@@ -180,7 +192,7 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 		return 0, fmt.Errorf("marshal request body: %w", err)
 	}
 
-	path := "/my/products/" + domainutil.Domain(fqdnName) + "/dns/records/"
+	path := recordsPath(object)
 	responseData, err := c.doRequest("POST", path, bytes.NewBuffer(postBody))
 	if err != nil {
 		log.Errorln(err)
@@ -197,8 +209,12 @@ func (c *SimplyClient) AddRecord(FQDNName string, Value string, recordType Recor
 
 // RemoveRecord Remove record from simply
 func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
-	dnsName := cutTrailingDotIfExist(DnsName)
-	path := "/my/products/" + domainutil.Domain(dnsName) + "/dns/records/" + strconv.Itoa(RecordId) + "/"
+	object, _, err := c.resolveProduct(DnsName)
+	if err != nil {
+		log.Errorln(err)
+		return false
+	}
+	path := recordsPath(object) + strconv.Itoa(RecordId) + "/"
 	if _, err := c.doRequest("DELETE", path, nil); err != nil {
 		log.Errorln(err)
 		return false
@@ -208,8 +224,12 @@ func (c *SimplyClient) RemoveRecord(RecordId int, DnsName string) bool {
 
 // GetRecord Fetch record by FQDNName, RecordData and RecordType,TTL and priority are ignored, returns id of first record found.
 func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType RecordType) (int, string, error) {
-	fqdnName := cutTrailingDotIfExist(FQDNName)
-	responseData, err := getRecords(fqdnName, c)
+	object, subdomain, err := c.resolveProduct(FQDNName)
+	if err != nil {
+		log.Errorln(err)
+		return 0, "", err
+	}
+	responseData, err := getRecords(object, c)
 	if err != nil {
 		return 0, "", err
 	}
@@ -219,7 +239,6 @@ func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType 
 		return 0, "", fmt.Errorf("unmarshal records response: %w", err)
 	}
 
-	subdomain := domainutil.Subdomain(fqdnName)
 	for i := 0; i < len(records.Records); i++ {
 		if records.Records[i].Data == RecordData && records.Records[i].Type == string(recordType) && records.Records[i].Name == subdomain {
 			return records.Records[i].RecordId, records.Records[i].Data, nil
@@ -238,17 +257,20 @@ func (c *SimplyClient) GetRecord(FQDNName string, RecordData string, recordType 
 
 // GetRecords Fetch records by FQDNName returns id
 func (c *SimplyClient) GetRecords(FQDNName string) (string, error) {
-	fqdnName := cutTrailingDotIfExist(FQDNName)
-	responseData, err := getRecords(fqdnName, c)
+	object, _, err := c.resolveProduct(FQDNName)
+	if err != nil {
+		log.Errorln(err)
+		return "", err
+	}
+	responseData, err := getRecords(object, c)
 	if err != nil {
 		return "", err
 	}
 	return string(responseData), nil
 }
 
-func getRecords(fqdnName string, c *SimplyClient) ([]byte, error) {
-	path := "/my/products/" + domainutil.Domain(fqdnName) + "/dns/records/"
-	data, err := c.doRequest("GET", path, nil)
+func getRecords(object string, c *SimplyClient) ([]byte, error) {
+	data, err := c.doRequest("GET", recordsPath(object), nil)
 	if err != nil {
 		log.Errorln(err)
 		return nil, err
@@ -262,7 +284,11 @@ func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string,
 		log.Errorln("Invalid record type: ", recordType)
 		return false, errors.New("invalid record type")
 	}
-	fqdnName := cutTrailingDotIfExist(FQDNName)
+	object, name, err := c.resolveProduct(FQDNName)
+	if err != nil {
+		log.Errorln(err)
+		return false, err
+	}
 
 	effectiveTTL := c.DefaultTTL
 	if effectiveTTL <= 0 {
@@ -271,7 +297,7 @@ func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string,
 
 	TXTRecordBody := CreateUpdateRecordBody{
 		Type:     recordType,
-		Name:     domainutil.Subdomain(fqdnName),
+		Name:     name,
 		Data:     Value,
 		Priority: 1,
 		Ttl:      effectiveTTL,
@@ -282,7 +308,7 @@ func (c *SimplyClient) UpdateRecord(RecordId int, FQDNName string, Value string,
 		return false, fmt.Errorf("marshal request body: %w", err)
 	}
 
-	path := "/my/products/" + domainutil.Domain(fqdnName) + "/dns/records/" + strconv.Itoa(RecordId) + "/"
+	path := recordsPath(object) + strconv.Itoa(RecordId) + "/"
 	if _, err := c.doRequest("PUT", path, bytes.NewBuffer(putBody)); err != nil {
 		log.Errorln(err)
 		return false, err
@@ -316,6 +342,75 @@ func (c *SimplyClient) UpsertAddressRecord(FQDNName string, Ip string) (bool, er
 		return false, addErr
 	}
 	return true, nil
+}
+
+func (c *SimplyClient) resolveProduct(FQDNName string) (string, string, error) {
+	objects, err := c.productObjects()
+	if err != nil {
+		return "", "", err
+	}
+
+	fqdnName := strings.ToLower(cutTrailingDotIfExist(FQDNName))
+	for candidate := fqdnName; candidate != ""; {
+		if object, ok := objects[candidate]; ok {
+			name := strings.TrimSuffix(strings.TrimSuffix(fqdnName, candidate), ".")
+			return object, name, nil
+		}
+		dot := strings.IndexByte(candidate, '.')
+		if dot < 0 {
+			break
+		}
+		candidate = candidate[dot+1:]
+	}
+	return "", "", fmt.Errorf("no Simply.com product found for %q", FQDNName)
+}
+
+func (c *SimplyClient) productObjects() (map[string]string, error) {
+	if c.products == nil {
+		c.products = &productCache{}
+	}
+	c.products.mu.Lock()
+	defer c.products.mu.Unlock()
+
+	if c.products.objects != nil {
+		return c.products.objects, nil
+	}
+
+	data, err := c.doRequest("GET", "/my/products/", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list products: %w", err)
+	}
+	var response struct {
+		Products []struct {
+			Object string `json:"object"`
+			Domain struct {
+				Name    string `json:"name"`
+				NameIdn string `json:"name_idn"`
+			} `json:"domain"`
+		} `json:"products"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("unmarshal products response: %w", err)
+	}
+
+	objects := make(map[string]string, len(response.Products)*3)
+	for _, p := range response.Products {
+		objects[strings.ToLower(p.Object)] = p.Object
+	}
+	for _, p := range response.Products {
+		for _, name := range []string{p.Domain.Name, p.Domain.NameIdn} {
+			key := strings.ToLower(name)
+			if _, exists := objects[key]; name != "" && !exists {
+				objects[key] = p.Object
+			}
+		}
+	}
+	c.products.objects = objects
+	return objects, nil
+}
+
+func recordsPath(object string) string {
+	return "/my/products/" + url.PathEscape(object) + "/dns/records/"
 }
 
 func cutTrailingDotIfExist(FQDNName string) string {
