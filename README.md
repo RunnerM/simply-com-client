@@ -2,7 +2,8 @@
 
 # A partial client library for simply.com dns provider's API.
 
-![GitHub](https://img.shields.io/github/license/runnerm/simply-com-client) ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/runnerm/simply-com-client)
+![GitHub](https://img.shields.io/github/license/runnerm/simply-com-client) ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/runnerm/simply-com-client) 
+	[![Go Report Card](https://goreportcard.com/badge/github.com/runnerm/simply-com-client)](https://goreportcard.com/report/github.com/runnerm/simply-com-client)
 </div>
 
 This is partial implementation of simply.com dns provider's API. Any contribution is welcome in the 
@@ -16,9 +17,10 @@ import (
 	"github.com/runnerm/simply-com-client"
 )
 ```
-Create a new client with your API key.
+Create a new client with your API key. It is sent as a Bearer token; the account name
+is no longer needed and can be left empty.
 ``` go
-client := CreateSimplyClient("accountName", "apiKey")
+client := CreateSimplyClient("", "apiKey")
 ```
 Use the client to interact with the API.
 ``` go
@@ -31,4 +33,5 @@ records, err := client.GetRecord("example.com")
 - [x] AddRecord
 - [x] RemoveRecord
 - [x] UpdateRecord
+- [x] UpdateDDNS
 
